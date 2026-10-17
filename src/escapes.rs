@@ -58,6 +58,25 @@ fn head(s: &str, chars: usize) -> String {
     s.chars().take(chars).collect()
 }
 
+/// The Ollama edge: asks the server which models it holds, so a missing server or model is reported once, before any labelling.
+pub fn preflight(ollama: &str, model: &str) -> Result<(), Error> {
+    let down = |why: String| Error::OllamaDown { url: ollama.to_string(), why };
+    let mut resp = ureq::get(&format!("{ollama}/api/tags"))
+        .config()
+        .timeout_global(Some(Duration::from_secs(10)))
+        .build()
+        .call()
+        .map_err(|e| down(e.to_string()))?;
+    let text = resp.body_mut().read_to_string().map_err(|e| down(e.to_string()))?;
+    let tags: Value = serde_json::from_str(&text).map_err(|e| down(e.to_string()))?;
+    let wanted = if model.contains(':') { model.to_string() } else { format!("{model}:latest") };
+    let held = tags
+        .get("models")
+        .and_then(Value::as_array)
+        .is_some_and(|ms| ms.iter().any(|m| m.get("name").and_then(Value::as_str) == Some(wanted.as_str())));
+    if held { Ok(()) } else { Err(Error::ModelNotPulled { url: ollama.to_string(), model: model.to_string() }) }
+}
+
 /// The Ollama edge: one chat call, temperature 0, answer held to the label schema.
 pub fn label(ollama: &str, model: &str, turn: &HumanTurn) -> Result<Label, Error> {
     let body = json!({

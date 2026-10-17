@@ -33,8 +33,16 @@ const USAGE: &str = "lightsout: how long coding agents run per human touch
   lightsout escapes [--days 1 | --since 2026-10-17T07:00:00Z [--until ...]] [--model qwen3.5:9b-q8_0] [--ollama http://127.0.0.1:11434] [--json]
       share of human turns that say an agent's work was wrong, labelled by a local model (a floor)";
 
-fn home() -> PathBuf {
-    std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default()
+fn default_projects() -> Result<PathBuf, Error> {
+    if let Some(dir) = std::env::var_os("CLAUDE_CONFIG_DIR").filter(|d| !d.is_empty()) {
+        return Ok(PathBuf::from(dir).join("projects"));
+    }
+    let home = std::env::var_os("HOME").filter(|h| !h.is_empty()).ok_or(Error::NoHome)?;
+    Ok(PathBuf::from(home).join(".claude/projects"))
+}
+
+fn default_hub_db() -> PathBuf {
+    std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default().join(".local/share/command-hub/hub.db")
 }
 
 fn parse_args(args: &[String]) -> Result<Command, Error> {
@@ -77,12 +85,18 @@ fn parse_args(args: &[String]) -> Result<Command, Error> {
             Some(v) => transcript::Instant::parse(&v).map(Some).ok_or(Error::BadInstant { flag, given: v }),
         }
     };
-    let projects = || get("--projects").map(PathBuf::from).unwrap_or_else(|| home().join(".claude/projects"));
+    let projects = || match get("--projects") {
+        Some(p) => Ok(PathBuf::from(p)),
+        None => default_projects(),
+    };
+    if get("--days").is_some() && get("--since").is_some() {
+        return Err(Error::DaysAndSince);
+    }
     Ok(match cmd.as_str() {
-        "runs" => Command::Runs { days: days(7)?, projects: projects(), json },
+        "runs" => Command::Runs { days: days(7)?, projects: projects()?, json },
         "andon" => Command::Andon {
             days: days(14)?,
-            hub_db: get("--hub-db").map(PathBuf::from).unwrap_or_else(|| home().join(".local/share/command-hub/hub.db")),
+            hub_db: get("--hub-db").map(PathBuf::from).unwrap_or_else(default_hub_db),
             json,
         },
         _ => Command::Escapes {
@@ -90,7 +104,7 @@ fn parse_args(args: &[String]) -> Result<Command, Error> {
                 Some(since) => Window::Span { since, until: instant("--until")? },
                 None => Window::Days(days(1)?),
             },
-            projects: projects(),
+            projects: projects()?,
             model: get("--model").unwrap_or_else(|| "qwen3.5:9b-q8_0".into()),
             ollama: get("--ollama").unwrap_or_else(|| "http://127.0.0.1:11434".into()),
             json,
@@ -107,6 +121,9 @@ fn read_events(f: &Path) -> Vec<transcript::Event> {
 }
 
 fn transcripts(dir: &Path, since: SystemTime) -> Result<Vec<PathBuf>, Error> {
+    if !dir.is_dir() {
+        return Err(Error::NoProjectsDir { dir: dir.to_path_buf() });
+    }
     let read = |d: &Path| std::fs::read_dir(d).map_err(|e| Error::ReadDir { dir: d.to_path_buf(), why: e.to_string() });
     let mut out = Vec::new();
     for project in read(dir)?.flatten() {
@@ -120,6 +137,12 @@ fn transcripts(dir: &Path, since: SystemTime) -> Result<Vec<PathBuf>, Error> {
         }
     }
     if out.is_empty() {
+        let holds_jsonl = std::fs::read_dir(dir)
+            .map(|d| d.flatten().any(|f| f.path().extension().is_some_and(|e| e == "jsonl")))
+            .unwrap_or(false);
+        if holds_jsonl {
+            return Err(Error::ProjectFolder { dir: dir.to_path_buf() });
+        }
         return Err(Error::NoTranscripts { dir: dir.to_path_buf() });
     }
     Ok(out)
@@ -158,17 +181,24 @@ fn run(cmd: Command) -> Result<String, Error> {
             };
             let oldest = UNIX_EPOCH + Duration::from_millis(since.0.max(0) as u64);
             let files = transcripts(&projects, oldest)?;
-            let mut labelled = Vec::new();
-            for f in &files {
-                for turn in escapes::human_turns(read_events(f)) {
-                    let inside = turn.at >= since && until.is_none_or(|u| turn.at < u);
-                    if inside {
-                        let label = escapes::label(&ollama, &model, &turn)?;
-                        labelled.push((turn.at, label));
-                    }
-                }
+            let sessions: Vec<_> = files.iter().map(|f| read_events(f)).collect();
+            let untagged = sessions
+                .iter()
+                .filter(|events| !events.iter().any(|e| matches!(e, transcript::Event::Input { tagged: true, .. })))
+                .count();
+            let turns: Vec<_> = sessions
+                .into_iter()
+                .flat_map(escapes::human_turns)
+                .filter(|turn| turn.at >= since && until.is_none_or(|u| turn.at < u))
+                .collect();
+            if !turns.is_empty() {
+                escapes::preflight(&ollama, &model)?;
             }
-            let r = report::escapes_report(model, since, until, labelled);
+            let mut labelled = Vec::new();
+            for turn in &turns {
+                labelled.push((turn.at, escapes::label(&ollama, &model, turn)?));
+            }
+            let r = report::escapes_report(model, since, until, untagged, labelled);
             Ok(if json { r.json().to_string() } else { r.text() })
         }
         Command::Andon { days, hub_db, json } => {

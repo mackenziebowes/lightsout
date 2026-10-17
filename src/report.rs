@@ -130,6 +130,12 @@ impl RunsReport {
             "inputs by sender:".into(),
         ];
         out.extend(self.inputs.iter().map(|(k, n)| format!("  {k}: {n}")));
+        if self.tagged_sessions == 0 {
+            out.push(format!(
+                "nothing measured: all {} sessions in the window predate origin tags, so a human turn can't be told from a hook or another agent. Update Claude Code, use it, and run again",
+                self.untagged_sessions
+            ));
+        }
         out.join("\n")
     }
 }
@@ -201,11 +207,12 @@ pub struct EscapesReport {
     pub until: Option<Instant>,
     pub turns: usize,
     pub escapes: usize,
+    pub untagged_sessions: usize,
 }
 
-pub fn escapes_report(model: String, since: Instant, until: Option<Instant>, labelled: Vec<(Instant, Label)>) -> EscapesReport {
+pub fn escapes_report(model: String, since: Instant, until: Option<Instant>, untagged_sessions: usize, labelled: Vec<(Instant, Label)>) -> EscapesReport {
     let escapes = labelled.iter().filter(|(_, l)| matches!(l, Label::Escape)).count();
-    EscapesReport { model, since, until, turns: labelled.len(), escapes }
+    EscapesReport { model, since, until, turns: labelled.len(), escapes, untagged_sessions }
 }
 
 impl EscapesReport {
@@ -214,20 +221,25 @@ impl EscapesReport {
             "model": self.model,
             "sinceMs": self.since.0,
             "untilMs": self.until.map(|u| u.0),
+            "untaggedSessionsSkipped": self.untagged_sessions,
             "rate": if self.turns == 0 { json!({"kind": "unmeasured"}) } else { json!({"kind": "floor", "escapes": self.escapes, "turns": self.turns}) },
         })
     }
 
     pub fn text(&self) -> String {
         if self.turns == 0 {
-            return "lightsout escapes: unmeasured (no human turns in the window)".into();
+            return format!(
+                "lightsout escapes: unmeasured (no human turns in the window; {} sessions predate origin tags and were skipped, because without tags a human turn can't be told from a hook or another agent)",
+                self.untagged_sessions
+            );
         }
         format!(
-            "lightsout escapes: {} of {} human turns say an agent's work or claim was wrong ({:.1}%), labelled by {}.\nThis is a floor: check the model against your own blind labels on a sample before trusting the number (on Heron's held-out sample, 2026-10-16: precision 6/6, recall 6/11).",
+            "lightsout escapes: {} of {} human turns say an agent's work or claim was wrong ({:.1}%), labelled by {}. {} sessions predate origin tags and were skipped.\nThis is a floor: check the model against your own blind labels on a sample before trusting the number (on the author's hand-labelled sample of 11 escapes, see the README: precision 6/6, recall 6/11).",
             self.escapes,
             self.turns,
             100.0 * self.escapes as f64 / self.turns as f64,
-            self.model
+            self.model,
+            self.untagged_sessions
         )
     }
 }

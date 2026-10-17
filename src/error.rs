@@ -13,6 +13,13 @@ pub enum Error {
     HubDb { path: PathBuf, why: String },
     Ollama { url: String, model: String, why: String },
     BadInstant { flag: &'static str, given: String },
+    NoHome,
+    DaysAndSince,
+    ProjectFolder { dir: PathBuf },
+    NoProjectsDir { dir: PathBuf },
+    NoHub { path: PathBuf },
+    OllamaDown { url: String, why: String },
+    ModelNotPulled { url: String, model: String },
 }
 
 impl fmt::Display for Error {
@@ -53,8 +60,40 @@ impl fmt::Display for Error {
             ),
             Error::HubDb { path, why } => write!(
                 f,
-                "lightsout: can't read the hub database at {}: {why}. Pass --hub-db PATH, or run 'runs', which needs no hub",
+                "lightsout: {} is not a command hub database this version can read ({why}). Pass --hub-db PATH to the hub's hub.db, or use 'runs', which needs only your transcripts",
                 path.display()
+            ),
+            Error::DaysAndSince => write!(
+                f,
+                "lightsout: --days and --since both set the start of the window. Use one: --days 7, or --since 2026-10-10T00:00:00Z"
+            ),
+            Error::ProjectFolder { dir } => write!(
+                f,
+                "lightsout: {} holds transcripts (*.jsonl) directly, but --projects wants the folder one level up, the one that holds a folder per project. Try --projects {}",
+                dir.display(),
+                dir.parent().map(|p| p.display().to_string()).unwrap_or_default()
+            ),
+            Error::NoHome => write!(
+                f,
+                "lightsout: HOME is not set, so there is no default folder for Claude Code transcripts. Pass --projects DIR, for example --projects ~/.claude/projects"
+            ),
+            Error::NoProjectsDir { dir } => write!(
+                f,
+                "lightsout: no Claude Code transcripts folder at {}. Claude Code writes one there after your first session; use it once and run again, or pass --projects DIR (or set CLAUDE_CONFIG_DIR if you moved it)",
+                dir.display()
+            ),
+            Error::NoHub { path } => write!(
+                f,
+                "lightsout: andon reads the command hub's database, and there is none at {}. It is the one gauge that needs that hub, which only the machine that runs it has. Use 'lightsout runs' and 'lightsout escapes', which need only your transcripts, or pass --hub-db PATH if you run a hub",
+                path.display()
+            ),
+            Error::OllamaDown { url, why } => write!(
+                f,
+                "lightsout: escapes labels your turns with a local model through Ollama, and nothing answered at {url} ({why}). Install Ollama from https://ollama.com, start it (ollama serve), then pull a model (ollama pull qwen3.5:9b-q8_0), or pass --ollama URL. Nothing leaves your machine"
+            ),
+            Error::ModelNotPulled { url, model } => write!(
+                f,
+                "lightsout: Ollama at {url} is running but does not have the model {model}. Run: ollama pull {model} (models are several GB), or pass --model with one you have (ollama list)"
             ),
         }
     }

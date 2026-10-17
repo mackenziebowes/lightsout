@@ -6,6 +6,9 @@ use rusqlite::{Connection, OpenFlags, params};
 use std::path::Path;
 
 pub fn read(path: &Path, days: u32, now_ms: i64) -> Result<AndonReport, Error> {
+    if !path.is_file() {
+        return Err(Error::NoHub { path: path.to_path_buf() });
+    }
     let fail = |e: rusqlite::Error| Error::HubDb { path: path.to_path_buf(), why: e.to_string() };
     let db = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX).map_err(fail)?;
     let since = now_ms - i64::from(days) * 86_400_000;
