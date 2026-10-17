@@ -133,7 +133,14 @@ impl RunsReport {
     }
 }
 
+/// Of tickets done in the window that had a recorded review run, how many had no bug finding.
+pub enum FirstPassYield {
+    Measured { reviewed: i64, clean: i64 },
+    Unmeasured,
+}
+
 pub struct AndonReport {
+    pub first_pass_yield: FirstPassYield,
     pub days: u32,
     pub asks_by_shape: Vec<(String, i64)>,
     pub answers_by_shape_and_action: Vec<(String, String, i64)>,
@@ -152,6 +159,10 @@ impl AndonReport {
             "answerMinutes": self.answer_minutes.json(),
             "withdrawn": self.withdrawn,
             "open": self.open,
+            "firstPassYield": match &self.first_pass_yield {
+                FirstPassYield::Measured { reviewed, clean } => json!({"kind": "measured", "reviewed": reviewed, "clean": clean}),
+                FirstPassYield::Unmeasured => json!({"kind": "unmeasured"}),
+            },
             "findingsByFinder": self.findings_by_finder.iter().map(|(f, n)| json!({"foundBy": f, "n": n})).collect::<Vec<_>>(),
         })
     }
@@ -164,6 +175,13 @@ impl AndonReport {
         out.extend(self.answers_by_shape_and_action.iter().map(|(s, a, n)| format!("  {s} {a}: {n}")));
         out.push(self.answer_minutes.line("minutes from ask to answer", "min"));
         out.push(format!("withdrawn by the asker: {}   still open: {}", self.withdrawn, self.open));
+        out.push(match &self.first_pass_yield {
+            FirstPassYield::Measured { reviewed, clean } => format!(
+                "first-pass yield: {clean} of {reviewed} done tickets with a review run had no bug finding ({:.0}%)",
+                100.0 * *clean as f64 / *reviewed as f64
+            ),
+            FirstPassYield::Unmeasured => "first-pass yield: unmeasured (no done ticket in the window has a review run)".into(),
+        });
         out.push("findings by who found them:".into());
         if self.findings_by_finder.is_empty() {
             out.push("  none in the window".into());

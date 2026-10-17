@@ -1,7 +1,7 @@
 //! The hub edge: reads asks, answers, withdrawals and findings from the hub's SQLite database, read-only. Promise: it never writes to hub.db.
 
 use crate::error::Error;
-use crate::report::{AndonReport, Spread};
+use crate::report::{AndonReport, FirstPassYield, Spread};
 use rusqlite::{Connection, OpenFlags, params};
 use std::path::Path;
 
@@ -55,7 +55,23 @@ pub fn read(path: &Path, days: u32, now_ms: i64) -> Result<AndonReport, Error> {
          AND NOT EXISTS (SELECT 1 FROM withdrawals w WHERE w.ask_id = a.id)",
     )?;
 
+    let first_pass = db
+        .query_row(
+            "WITH done AS (SELECT DISTINCT ticket_id FROM transitions WHERE status = 'done' AND at_ms > ?1) \
+             SELECT count(*) AS reviewed, \
+                    coalesce(sum(NOT EXISTS (SELECT 1 FROM findings f WHERE f.ticket_id = d.ticket_id AND f.kind = 'bug')), 0) AS clean \
+             FROM done d WHERE EXISTS (SELECT 1 FROM runs r WHERE r.ticket_id = d.ticket_id AND r.role = 'review')",
+            params![since],
+            |r| Ok((r.get::<_, i64>("reviewed")?, r.get::<_, i64>("clean")?)),
+        )
+        .map_err(fail)?;
+    let first_pass_yield = match first_pass {
+        (0, _) => FirstPassYield::Unmeasured,
+        (reviewed, clean) => FirstPassYield::Measured { reviewed, clean },
+    };
+
     Ok(AndonReport {
+        first_pass_yield,
         days,
         asks_by_shape,
         answers_by_shape_and_action,
