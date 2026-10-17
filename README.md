@@ -27,7 +27,7 @@ Transcripts are read from `~/.claude/projects` (or `$CLAUDE_CONFIG_DIR/projects`
 By default every transcript under the projects folder counts. A crew's numbers then mix with everything else the machine ran. Two filters, on `runs` and `escapes`, fix that:
 
 - `--since` and `--until` take UTC times like `2026-10-17T02:00:00Z`, and replace `--days`. `--until` is exclusive and needs `--since`. Only turns inside the window count.
-- `--agent Keel,Harbor` keeps the sessions that carry one of those names (case ignored). The name comes from the `agent-name` record Claude Code writes when you name a session (`claude --name Keel`, or `/rename`). A session that never got a name is left out, and the report says how many files that was. No names? Use the time window.
+- `--agent Keel,Harbor` keeps the sessions that carry one of those names (case ignored). The name comes from the `agent-name` record Claude Code writes when you name a session (`claude --name Keel`, or `/rename`). A session that never got a name is left out, and the report says how many sessions active in the window that was. No names? Use the time window.
 
 `runs` prints something like this (a real week of one person's use):
 

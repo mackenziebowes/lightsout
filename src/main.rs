@@ -134,12 +134,27 @@ fn read_session_file(f: &Path) -> Session {
     }
 }
 
-/// Splits sessions into those the scope's agents admit and a count of those left out.
-fn in_agents(files: &[PathBuf], agents: &Agents) -> (Vec<Session>, usize) {
-    let all: Vec<Session> = files.iter().map(|f| read_session_file(f)).collect();
-    let total = all.len();
-    let kept: Vec<Session> = all.into_iter().filter(|s| agents.admits(&s.names)).collect();
-    let left_out = total - kept.len();
+/// Splits sessions into those the scope's agents admit and a count of those left out that had a turn in the window.
+fn in_agents(files: &[PathBuf], scope: &Scope, now_ms: i64) -> (Vec<Session>, usize) {
+    let (since, until) = scope.window.bounds(now_ms);
+    let in_window = |s: &Session| {
+        s.events.iter().any(|e| {
+            let at = match e {
+                transcript::Event::Input { at, .. } | transcript::Event::ToolResult { at } | transcript::Event::AgentTurn { at, .. } => *at,
+            };
+            at >= since && until.is_none_or(|u| at < u)
+        })
+    };
+    let mut kept = Vec::new();
+    let mut left_out = 0;
+    for f in files {
+        let s = read_session_file(f);
+        if scope.agents.admits(&s.names) {
+            kept.push(s);
+        } else if in_window(&s) {
+            left_out += 1;
+        }
+    }
     (kept, left_out)
 }
 
@@ -179,7 +194,7 @@ fn run(cmd: Command) -> Result<String, Error> {
         Command::Runs { scope, projects, json } => {
             let (since, until) = scope.window.bounds(now_ms);
             let files = transcripts(&projects, UNIX_EPOCH + Duration::from_millis(since.0.max(0) as u64))?;
-            let (sessions, left_out) = in_agents(&files, &scope.agents);
+            let (sessions, left_out) = in_agents(&files, &scope, now_ms);
             let readings = sessions
                 .into_iter()
                 .map(|s| {
@@ -202,7 +217,7 @@ fn run(cmd: Command) -> Result<String, Error> {
             let (since, until) = scope.window.bounds(now_ms);
             let oldest = UNIX_EPOCH + Duration::from_millis(since.0.max(0) as u64);
             let files = transcripts(&projects, oldest)?;
-            let (sessions, left_out) = in_agents(&files, &scope.agents);
+            let (sessions, left_out) = in_agents(&files, &scope, now_ms);
             let sessions: Vec<_> = sessions.into_iter().map(|s| s.events).collect();
             let untagged = sessions
                 .iter()

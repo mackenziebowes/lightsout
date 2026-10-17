@@ -67,7 +67,7 @@ impl AgentsReport {
         match self {
             AgentsReport::Any => None,
             AgentsReport::Named { names, left_out } => Some(format!(
-                "only sessions named {names}; left out {left_out} transcript files with other names or none"
+                "only sessions named {names}; left out {left_out} sessions with a turn in the window and other names or none"
             )),
         }
     }
