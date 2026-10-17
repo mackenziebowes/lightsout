@@ -11,6 +11,8 @@ pub enum Error {
     NoTranscripts { dir: PathBuf },
     ReadDir { dir: PathBuf, why: String },
     HubDb { path: PathBuf, why: String },
+    Ollama { url: String, model: String, why: String },
+    BadInstant { flag: &'static str, given: String },
 }
 
 impl fmt::Display for Error {
@@ -18,7 +20,7 @@ impl fmt::Display for Error {
         match self {
             Error::UnknownCommand { given } => write!(
                 f,
-                "lightsout: unknown command '{given}'. The commands are 'runs' and 'andon'. Try: lightsout runs --days 7"
+                "lightsout: unknown command '{given}'. The commands are 'runs', 'andon' and 'escapes'. Try: lightsout runs --days 7"
             ),
             Error::MissingValue { flag } => {
                 write!(f, "lightsout: {flag} needs a value after it, for example {flag} 7")
@@ -29,7 +31,7 @@ impl fmt::Display for Error {
             ),
             Error::UnknownFlag { given } => write!(
                 f,
-                "lightsout: unknown flag '{given}'. runs takes --days N, --projects DIR and --json; andon takes --days N, --hub-db PATH and --json"
+                "lightsout: unknown flag '{given}'. runs takes --days N, --projects DIR and --json; andon takes --days N, --hub-db PATH and --json; escapes takes --days N or --since/--until, --projects DIR, --model, --ollama and --json"
             ),
             Error::NoTranscripts { dir } => write!(
                 f,
@@ -40,6 +42,14 @@ impl fmt::Display for Error {
                 f,
                 "lightsout: can't read {}: {why}. Check the path, or pass --projects DIR",
                 dir.display()
+            ),
+            Error::Ollama { url, model, why } => write!(
+                f,
+                "lightsout: the local model {model} at {url} gave no label: {why}. Start Ollama (ollama serve), pull the model (ollama pull {model}), or pass --model and --ollama"
+            ),
+            Error::BadInstant { flag, given } => write!(
+                f,
+                "lightsout: {flag} takes a UTC time like 2026-10-17T07:00:00Z; got '{given}'"
             ),
             Error::HubDb { path, why } => write!(
                 f,

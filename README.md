@@ -6,7 +6,10 @@ How long do your coding agents run between human touches? `lightsout runs` reads
 cargo build --release
 ./target/release/lightsout runs --days 7          # or --json
 ./target/release/lightsout andon --days 14        # the command hub's asks and findings (this machine only)
+./target/release/lightsout escapes --days 1       # share of your turns that say an agent got it wrong (local Ollama model)
 ```
+
+Watch two numbers together: minutes per touch (`runs`) should rise, and the share of your turns that catch a defect (`escapes`) should fall. `escapes` labels each human turn with a local model (default `qwen3.5:9b-q8_0`), so it costs nothing, and it reads as a floor. Check it against your own blind labels on a sample first.
 
 Read-only. Only sessions whose transcripts carry `origin` tags (recent Claude Code versions) are measured; older ones are counted and left out.
 

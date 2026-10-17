@@ -40,10 +40,10 @@ pub fn step(state: State, event: &Event) -> (State, Effect) {
             State::Running { started: *at, last_agent: *at },
             Effect::RunEnded(Run { started, last_agent }),
         ),
-        (State::Running { started, .. }, Event::AgentTurn { at }) => {
+        (State::Running { started, .. }, Event::AgentTurn { at, .. }) => {
             (State::Running { started, last_agent: *at }, Effect::None)
         }
-        (State::Unattended { first, .. }, Event::AgentTurn { at }) => {
+        (State::Unattended { first, .. }, Event::AgentTurn { at, .. }) => {
             (State::Unattended { first: first.or(Some(*at)), last: Some(*at) }, Effect::None)
         }
         (state, Event::Input { .. } | Event::ToolResult { .. }) => (state, Effect::None),
@@ -94,6 +94,6 @@ pub fn read_session(mut events: Vec<Event>) -> SessionReading {
 
 fn at(e: &Event) -> Instant {
     match e {
-        Event::Input { at, .. } | Event::ToolResult { at } | Event::AgentTurn { at } => *at,
+        Event::Input { at, .. } | Event::ToolResult { at } | Event::AgentTurn { at, .. } => *at,
     }
 }

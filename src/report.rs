@@ -1,7 +1,8 @@
 //! Turns readings into the numbers people see, and holds every word of the printed report. Promise: a gauge with nothing to measure prints as unmeasured, never as 0.
 
+use crate::escapes::Label;
 use crate::session::SessionReading;
-use crate::transcript::InputFrom;
+use crate::transcript::{InputFrom, Instant};
 use serde_json::{Value, json};
 
 pub enum Spread {
@@ -191,5 +192,42 @@ impl AndonReport {
             out.push("  (no finding is recorded as found by mackenzie: escapes past review are unmeasured, not zero)".into());
         }
         out.join("\n")
+    }
+}
+
+pub struct EscapesReport {
+    pub model: String,
+    pub since: Instant,
+    pub until: Option<Instant>,
+    pub turns: usize,
+    pub escapes: usize,
+}
+
+pub fn escapes_report(model: String, since: Instant, until: Option<Instant>, labelled: Vec<(Instant, Label)>) -> EscapesReport {
+    let escapes = labelled.iter().filter(|(_, l)| matches!(l, Label::Escape)).count();
+    EscapesReport { model, since, until, turns: labelled.len(), escapes }
+}
+
+impl EscapesReport {
+    pub fn json(&self) -> Value {
+        json!({
+            "model": self.model,
+            "sinceMs": self.since.0,
+            "untilMs": self.until.map(|u| u.0),
+            "rate": if self.turns == 0 { json!({"kind": "unmeasured"}) } else { json!({"kind": "floor", "escapes": self.escapes, "turns": self.turns}) },
+        })
+    }
+
+    pub fn text(&self) -> String {
+        if self.turns == 0 {
+            return "lightsout escapes: unmeasured (no human turns in the window)".into();
+        }
+        format!(
+            "lightsout escapes: {} of {} human turns say an agent's work or claim was wrong ({:.1}%), labelled by {}.\nThis is a floor: check the model against your own blind labels on a sample before trusting the number (on Heron's held-out sample, 2026-10-16: precision 6/6, recall 6/11).",
+            self.escapes,
+            self.turns,
+            100.0 * self.escapes as f64 / self.turns as f64,
+            self.model
+        )
     }
 }

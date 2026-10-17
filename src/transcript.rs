@@ -55,9 +55,9 @@ pub enum InputFrom {
 }
 
 pub enum Event {
-    Input { at: Instant, from: InputFrom, tagged: bool },
+    Input { at: Instant, from: InputFrom, tagged: bool, text: String },
     ToolResult { at: Instant },
-    AgentTurn { at: Instant },
+    AgentTurn { at: Instant, text: String },
 }
 
 pub enum Skip {
@@ -81,10 +81,10 @@ pub fn parse_line(line: &str) -> Result<Event, Skip> {
         .and_then(Value::as_str)
         .and_then(Instant::parse)
         .ok_or(Skip::NoTimestamp)?;
-    if kind == "assistant" {
-        return Ok(Event::AgentTurn { at });
-    }
     let content = v.pointer("/message/content");
+    if kind == "assistant" {
+        return Ok(Event::AgentTurn { at, text: all_text(content) });
+    }
     let is_tool_result = content
         .and_then(Value::as_array)
         .and_then(|a| a.first())
@@ -95,14 +95,11 @@ pub fn parse_line(line: &str) -> Result<Event, Skip> {
         return Ok(Event::ToolResult { at });
     }
     match v.pointer("/origin/kind").and_then(Value::as_str) {
-        Some(origin) => Ok(Event::Input { at, from: from_origin(origin), tagged: true }),
+        Some(origin) => Ok(Event::Input { at, from: from_origin(origin), tagged: true, text: all_text(content) }),
         None => {
-            let from = if first_text(content).starts_with("[Request interrupted by user") {
-                InputFrom::Human
-            } else {
-                InputFrom::Harness
-            };
-            Ok(Event::Input { at, from, tagged: false })
+            let text = all_text(content);
+            let from = if text.starts_with("[Request interrupted by user") { InputFrom::Human } else { InputFrom::Harness };
+            Ok(Event::Input { at, from, tagged: false, text })
         }
     }
 }
@@ -118,13 +115,15 @@ fn from_origin(kind: &str) -> InputFrom {
     }
 }
 
-fn first_text(content: Option<&Value>) -> &str {
+fn all_text(content: Option<&Value>) -> String {
     match content {
-        Some(Value::String(s)) => s,
+        Some(Value::String(s)) => s.clone(),
         Some(Value::Array(items)) => items
             .iter()
-            .find_map(|i| i.get("text").and_then(Value::as_str))
-            .unwrap_or(""),
-        _ => "",
+            .filter(|i| i.get("type").and_then(Value::as_str) == Some("text"))
+            .filter_map(|i| i.get("text").and_then(Value::as_str))
+            .collect::<Vec<_>>()
+            .join(" "),
+        _ => String::new(),
     }
 }
