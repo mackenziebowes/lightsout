@@ -50,7 +50,7 @@ Watch two numbers together: minutes per touch (`runs`) should rise, and the shar
 
 Read-only. It writes nothing. Only sessions whose transcripts carry `origin` tags (recent Claude Code versions) are measured, and older ones are counted and left out of every number so that no figure quietly mixes two kinds of session.
 
-Why: a factory runs lights-out for as long as the time between abnormalities it can't handle itself. The research behind this tool is in the MBSI library, `wiki/how-to-run-a-lights-out-software-factory.md`.
+Why: a factory runs lights-out for as long as the time between abnormalities it can't handle itself.
 
 ## Talk
 
