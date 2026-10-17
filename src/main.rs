@@ -4,6 +4,7 @@ mod andon;
 mod error;
 mod escapes;
 mod report;
+mod scope;
 mod session;
 mod transcript;
 
@@ -11,26 +12,22 @@ use error::Error;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-/// Which turns to read: the last N days, or a fixed span of UTC time.
-enum Window {
-    Days(u32),
-    Span { since: transcript::Instant, until: Option<transcript::Instant> },
-}
+use scope::{Agents, Scope, Window};
 
 enum Command {
-    Runs { days: u32, projects: PathBuf, json: bool },
+    Runs { scope: Scope, projects: PathBuf, json: bool },
     Andon { days: u32, hub_db: PathBuf, json: bool },
-    Escapes { window: Window, projects: PathBuf, model: String, ollama: String, json: bool },
+    Escapes { scope: Scope, projects: PathBuf, model: String, ollama: String, json: bool },
     Help,
 }
 
 const USAGE: &str = "lightsout: how long coding agents run per human touch
 
-  lightsout runs  [--days 7] [--projects ~/.claude/projects] [--json]
+  lightsout runs  [--days 7 | --since 2026-10-17T02:00:00Z [--until ...]] [--agent Keel,Harbor] [--projects ~/.claude/projects] [--json]
       agent minutes after each human turn, from Claude Code transcripts
   lightsout andon [--days 14] [--hub-db ~/.local/share/command-hub/hub.db] [--json]
       the command hub's asks, answer times, withdrawals and findings
-  lightsout escapes [--days 1 | --since 2026-10-17T07:00:00Z [--until ...]] [--model qwen3.5:9b-q8_0] [--ollama http://127.0.0.1:11434] [--json]
+  lightsout escapes [--days 1 | --since 2026-10-17T07:00:00Z [--until ...]] [--agent Keel,Harbor] [--model qwen3.5:9b-q8_0] [--ollama http://127.0.0.1:11434] [--json]
       share of human turns that say an agent's work was wrong, labelled by a local model (a floor)";
 
 fn default_projects() -> Result<PathBuf, Error> {
@@ -54,9 +51,9 @@ fn parse_args(args: &[String]) -> Result<Command, Error> {
         return Err(Error::UnknownCommand { given: cmd.to_string() });
     }
     let allowed: &[&str] = match cmd.as_str() {
-        "runs" => &["--days", "--projects", "--json"],
+        "runs" => &["--days", "--since", "--until", "--agent", "--projects", "--json"],
         "andon" => &["--days", "--hub-db", "--json"],
-        _ => &["--days", "--since", "--until", "--projects", "--model", "--ollama", "--json"],
+        _ => &["--days", "--since", "--until", "--agent", "--projects", "--model", "--ollama", "--json"],
     };
     let mut values: Vec<(&'static str, String)> = Vec::new();
     let mut json = false;
@@ -92,18 +89,29 @@ fn parse_args(args: &[String]) -> Result<Command, Error> {
     if get("--days").is_some() && get("--since").is_some() {
         return Err(Error::DaysAndSince);
     }
+    if get("--until").is_some() && get("--since").is_none() {
+        return Err(Error::UntilAlone);
+    }
+    let scope = |default_days: u32| -> Result<Scope, Error> {
+        let window = match instant("--since")? {
+            Some(since) => Window::Span { since, until: instant("--until")? },
+            None => Window::Days(days(default_days)?),
+        };
+        let agents = match get("--agent") {
+            None => Agents::Any,
+            Some(list) => Agents::parse(&list).ok_or(Error::BadAgents { given: list })?,
+        };
+        Ok(Scope { window, agents })
+    };
     Ok(match cmd.as_str() {
-        "runs" => Command::Runs { days: days(7)?, projects: projects()?, json },
+        "runs" => Command::Runs { scope: scope(7)?, projects: projects()?, json },
         "andon" => Command::Andon {
             days: days(14)?,
             hub_db: get("--hub-db").map(PathBuf::from).unwrap_or_else(default_hub_db),
             json,
         },
         _ => Command::Escapes {
-            window: match instant("--since")? {
-                Some(since) => Window::Span { since, until: instant("--until")? },
-                None => Window::Days(days(1)?),
-            },
+            scope: scope(1)?,
             projects: projects()?,
             model: get("--model").unwrap_or_else(|| "qwen3.5:9b-q8_0".into()),
             ollama: get("--ollama").unwrap_or_else(|| "http://127.0.0.1:11434".into()),
@@ -112,12 +120,27 @@ fn parse_args(args: &[String]) -> Result<Command, Error> {
     })
 }
 
-fn read_events(f: &Path) -> Vec<transcript::Event> {
-    std::fs::read_to_string(f)
-        .unwrap_or_default()
-        .lines()
-        .filter_map(|l| transcript::parse_line(l).ok())
-        .collect()
+/// One transcript file: its turns, and the names Claude Code gave the session.
+struct Session {
+    events: Vec<transcript::Event>,
+    names: Vec<String>,
+}
+
+fn read_session_file(f: &Path) -> Session {
+    let text = std::fs::read_to_string(f).unwrap_or_default();
+    Session {
+        events: text.lines().filter_map(|l| transcript::parse_line(l).ok()).collect(),
+        names: text.lines().filter_map(transcript::agent_name).collect(),
+    }
+}
+
+/// Splits sessions into those the scope's agents admit and a count of those left out.
+fn in_agents(files: &[PathBuf], agents: &Agents) -> (Vec<Session>, usize) {
+    let all: Vec<Session> = files.iter().map(|f| read_session_file(f)).collect();
+    let total = all.len();
+    let kept: Vec<Session> = all.into_iter().filter(|s| agents.admits(&s.names)).collect();
+    let left_out = total - kept.len();
+    (kept, left_out)
 }
 
 fn transcripts(dir: &Path, since: SystemTime) -> Result<Vec<PathBuf>, Error> {
@@ -153,35 +176,34 @@ fn run(cmd: Command) -> Result<String, Error> {
     let now_ms = now.duration_since(UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0);
     match cmd {
         Command::Help => Ok(USAGE.to_string()),
-        Command::Runs { days, projects, json } => {
-            let since = now - Duration::from_secs(u64::from(days) * 86_400);
-            let cutoff = transcript::Instant(now_ms - i64::from(days) * 86_400_000);
-            let files = transcripts(&projects, since)?;
-            let readings = files
-                .iter()
-                .map(|f| {
-                    let events = read_events(f)
+        Command::Runs { scope, projects, json } => {
+            let (since, until) = scope.window.bounds(now_ms);
+            let files = transcripts(&projects, UNIX_EPOCH + Duration::from_millis(since.0.max(0) as u64))?;
+            let (sessions, left_out) = in_agents(&files, &scope.agents);
+            let readings = sessions
+                .into_iter()
+                .map(|s| {
+                    let events = s
+                        .events
                         .into_iter()
                         .filter(|e| match e {
                             transcript::Event::Input { at, .. }
                             | transcript::Event::ToolResult { at }
-                            | transcript::Event::AgentTurn { at, .. } => *at >= cutoff,
+                            | transcript::Event::AgentTurn { at, .. } => *at >= since && until.is_none_or(|u| *at < u),
                         })
                         .collect();
                     session::read_session(events)
                 })
                 .collect();
-            let r = report::runs_report(days, files.len(), readings);
+            let r = report::runs_report(&scope, files.len(), left_out, readings);
             Ok(if json { r.json().to_string() } else { r.text() })
         }
-        Command::Escapes { window, projects, model, ollama, json } => {
-            let (since, until) = match window {
-                Window::Days(d) => (transcript::Instant(now_ms - i64::from(d) * 86_400_000), None),
-                Window::Span { since, until } => (since, until),
-            };
+        Command::Escapes { scope, projects, model, ollama, json } => {
+            let (since, until) = scope.window.bounds(now_ms);
             let oldest = UNIX_EPOCH + Duration::from_millis(since.0.max(0) as u64);
             let files = transcripts(&projects, oldest)?;
-            let sessions: Vec<_> = files.iter().map(|f| read_events(f)).collect();
+            let (sessions, left_out) = in_agents(&files, &scope.agents);
+            let sessions: Vec<_> = sessions.into_iter().map(|s| s.events).collect();
             let untagged = sessions
                 .iter()
                 .filter(|events| !events.iter().any(|e| matches!(e, transcript::Event::Input { tagged: true, .. })))
@@ -198,7 +220,7 @@ fn run(cmd: Command) -> Result<String, Error> {
             for turn in &turns {
                 labelled.push((turn.at, escapes::label(&ollama, &model, turn)?));
             }
-            let r = report::escapes_report(model, since, until, untagged, labelled);
+            let r = report::escapes_report(model, &scope, (since, until), left_out, untagged, labelled);
             Ok(if json { r.json().to_string() } else { r.text() })
         }
         Command::Andon { days, hub_db, json } => {

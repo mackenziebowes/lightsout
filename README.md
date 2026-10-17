@@ -1,6 +1,6 @@
 # lightsout
 
-How long do your coding agents run between human touches? `lightsout runs` reads Claude Code transcripts (`~/.claude/projects/*/*.jsonl`) and prints, for every human turn, the span until the agent's last turn before the next human turn. Input from other agents, hooks, channels and background jobs doesn't end a span: that is the unattended work.
+How long do your coding agents run between human touches? `lightsout runs` reads Claude Code transcripts (`~/.claude/projects/*/*.jsonl`) and prints, for every human turn, the span until the agent's last turn before the next human turn. Input from other agents, hooks, channels and background jobs doesn't end a span, because that input is exactly the unattended work you want to see, the stretch where the agents carry on and no person has to step in.
 
 ## Install
 
@@ -15,11 +15,19 @@ cargo install --path .  # puts `lightsout` on your PATH (or: cargo build --relea
 
 ```
 lightsout runs --days 7      # needs only your transcripts. Add --json for machine output
+lightsout runs --since 2026-10-17T02:00:00Z --until 2026-10-17T10:00:00Z --agent Keel,Harbor   # one crew, one night
 lightsout escapes --days 1   # needs Ollama and a model (below)
 lightsout andon --days 14    # needs the command hub that runs on the author's machine; elsewhere it says so and stops
 ```
 
 Transcripts are read from `~/.claude/projects` (or `$CLAUDE_CONFIG_DIR/projects`). Point `--projects DIR` elsewhere if yours live somewhere else; DIR is the folder that holds one folder per project.
+
+### Measure one crew
+
+By default every transcript under the projects folder counts. A crew's numbers then mix with everything else the machine ran. Two filters, on `runs` and `escapes`, fix that:
+
+- `--since` and `--until` take UTC times like `2026-10-17T02:00:00Z`, and replace `--days`. `--until` is exclusive and needs `--since`. Only turns inside the window count.
+- `--agent Keel,Harbor` keeps the sessions that carry one of those names (case ignored). The name comes from the `agent-name` record Claude Code writes when you name a session (`claude --name Keel`, or `/rename`). A session that never got a name is left out, and the report says how many files that was. No names? Use the time window.
 
 `runs` prints something like this (a real week of one person's use):
 
@@ -34,13 +42,13 @@ inputs by sender:
   ...
 ```
 
-Read the median and the p90: half of the touches were followed by half a minute of agent work or less, one in ten by six minutes or more.
+Read the median and the p90. Half of the touches were followed by half a minute of agent work or less. One in ten ran six minutes or more.
 
 `escapes` labels each of your turns with a local model, so nothing leaves your machine and it costs nothing. Install [Ollama](https://ollama.com), run `ollama serve`, then `ollama pull qwen3.5:9b-q8_0` (about 10 GB; a smaller model works with `--model`, but check it first). Its prompt is in `src/escapes.rs`. The sample it mentions is a set of human turns, 11 of them real escapes, that the author labelled by hand to check the model.
 
-Watch two numbers together: minutes per touch (`runs`) should rise, and the share of your turns that catch a defect (`escapes`) should fall. `escapes` reads as a floor. Check it against your own blind labels on a sample first.
+Watch two numbers together: minutes per touch (`runs`) should rise, and the share of your turns that catch a defect (`escapes`) should fall. Neither alone says much. `escapes` reads as a floor. Check it against your own blind labels on a sample first.
 
-Read-only. Only sessions whose transcripts carry `origin` tags (recent Claude Code versions) are measured; older ones are counted and left out.
+Read-only. It writes nothing. Only sessions whose transcripts carry `origin` tags (recent Claude Code versions) are measured, and older ones are counted and left out of every number so that no figure quietly mixes two kinds of session.
 
 Why: a factory runs lights-out for as long as the time between abnormalities it can't handle itself. The research behind this tool is in the MBSI library, `wiki/how-to-run-a-lights-out-software-factory.md`.
 

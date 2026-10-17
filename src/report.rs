@@ -1,6 +1,7 @@
 //! Turns readings into the numbers people see, and holds every word of the printed report. Promise: a gauge with nothing to measure prints as unmeasured, never as 0.
 
 use crate::escapes::Label;
+use crate::scope::{Agents, Scope};
 use crate::session::SessionReading;
 use crate::transcript::{InputFrom, Instant};
 use serde_json::{Value, json};
@@ -41,8 +42,40 @@ impl Spread {
     }
 }
 
+/// Which agents the numbers cover, and how many sessions in the window their names left out.
+pub enum AgentsReport {
+    Any,
+    Named { names: String, left_out: usize },
+}
+
+impl AgentsReport {
+    pub fn of(agents: &Agents, left_out: usize) -> AgentsReport {
+        match agents.words() {
+            None => AgentsReport::Any,
+            Some(names) => AgentsReport::Named { names, left_out },
+        }
+    }
+
+    fn json(&self) -> Value {
+        match self {
+            AgentsReport::Any => json!({"kind": "any"}),
+            AgentsReport::Named { names, left_out } => json!({"kind": "named", "names": names, "sessionsLeftOut": left_out}),
+        }
+    }
+
+    fn line(&self) -> Option<String> {
+        match self {
+            AgentsReport::Any => None,
+            AgentsReport::Named { names, left_out } => Some(format!(
+                "only sessions named {names}; left out {left_out} transcript files with other names or none"
+            )),
+        }
+    }
+}
+
 pub struct RunsReport {
-    pub days: u32,
+    pub window: String,
+    pub agents: AgentsReport,
     pub files: usize,
     pub untagged_sessions: usize,
     pub tagged_sessions: usize,
@@ -52,7 +85,7 @@ pub struct RunsReport {
     pub inputs: Vec<(String, usize)>,
 }
 
-pub fn runs_report(days: u32, files: usize, readings: Vec<SessionReading>) -> RunsReport {
+pub fn runs_report(scope: &Scope, files: usize, left_out: usize, readings: Vec<SessionReading>) -> RunsReport {
     let mut untagged = 0;
     let mut tagged = 0;
     let mut never_touched = 0;
@@ -83,7 +116,8 @@ pub fn runs_report(days: u32, files: usize, readings: Vec<SessionReading>) -> Ru
     }
     counts.sort_by(|a, b| b.1.cmp(&a.1));
     RunsReport {
-        days,
+        window: scope.window.words(),
+        agents: AgentsReport::of(&scope.agents, left_out),
         files,
         untagged_sessions: untagged,
         tagged_sessions: tagged,
@@ -109,7 +143,8 @@ fn input_name(from: &InputFrom) -> String {
 impl RunsReport {
     pub fn json(&self) -> Value {
         json!({
-            "days": self.days,
+            "window": self.window,
+            "agents": self.agents.json(),
             "files": self.files,
             "sessions": {"tagged": self.tagged_sessions, "untagged": self.untagged_sessions, "neverTouched": self.sessions_never_touched},
             "agentMinutesPerHumanTouch": self.runs.json(),
@@ -120,7 +155,7 @@ impl RunsReport {
 
     pub fn text(&self) -> String {
         let mut out = vec![
-            format!("lightsout runs: last {} days, {} transcript files", self.days, self.files),
+            format!("lightsout runs: {}, {} transcript files", self.window, self.files),
             format!(
                 "sessions: {} with origin tags, {} without (written before Claude Code tagged origins; not measured), {} never touched by a human",
                 self.tagged_sessions, self.untagged_sessions, self.sessions_never_touched
@@ -130,11 +165,17 @@ impl RunsReport {
             "inputs by sender:".into(),
         ];
         out.extend(self.inputs.iter().map(|(k, n)| format!("  {k}: {n}")));
+        out.extend(self.agents.line());
         if self.tagged_sessions == 0 {
-            out.push(format!(
-                "nothing measured: every session in the window predates origin tags (count: {}), so a human turn can't be told from a hook or another agent. Update Claude Code, use it, and run again",
-                self.untagged_sessions
-            ));
+            out.push(match (&self.agents, self.untagged_sessions) {
+                (AgentsReport::Named { names, .. }, 0) => format!(
+                    "nothing measured: no session named {names} has a turn in the window. Check the spelling against the names in your transcripts, or widen the window"
+                ),
+                _ => format!(
+                    "nothing measured: every session in the window predates origin tags (count: {}), so a human turn can't be told from a hook or another agent. Update Claude Code, use it, and run again",
+                    self.untagged_sessions
+                ),
+            });
         }
         out.join("\n")
     }
@@ -203,38 +244,45 @@ impl AndonReport {
 
 pub struct EscapesReport {
     pub model: String,
+    pub window: String,
     pub since: Instant,
     pub until: Option<Instant>,
+    pub agents: AgentsReport,
     pub turns: usize,
     pub escapes: usize,
     pub untagged_sessions: usize,
 }
 
-pub fn escapes_report(model: String, since: Instant, until: Option<Instant>, untagged_sessions: usize, labelled: Vec<(Instant, Label)>) -> EscapesReport {
+pub fn escapes_report(model: String, scope: &Scope, (since, until): (Instant, Option<Instant>), left_out: usize, untagged_sessions: usize, labelled: Vec<(Instant, Label)>) -> EscapesReport {
     let escapes = labelled.iter().filter(|(_, l)| matches!(l, Label::Escape)).count();
-    EscapesReport { model, since, until, turns: labelled.len(), escapes, untagged_sessions }
+    EscapesReport { model, window: scope.window.words(), since, until, agents: AgentsReport::of(&scope.agents, left_out), turns: labelled.len(), escapes, untagged_sessions }
 }
 
 impl EscapesReport {
     pub fn json(&self) -> Value {
         json!({
             "model": self.model,
+            "window": self.window,
             "sinceMs": self.since.0,
             "untilMs": self.until.map(|u| u.0),
+            "agents": self.agents.json(),
             "untaggedSessionsSkipped": self.untagged_sessions,
             "rate": if self.turns == 0 { json!({"kind": "unmeasured"}) } else { json!({"kind": "floor", "escapes": self.escapes, "turns": self.turns}) },
         })
     }
 
     pub fn text(&self) -> String {
+        let agents = self.agents.line().map(|l| format!("\n{l}")).unwrap_or_default();
         if self.turns == 0 {
             return format!(
-                "lightsout escapes: unmeasured (no human turns in the window; skipped sessions that predate origin tags (count: {}), because without tags a human turn can't be told from a hook or another agent)",
+                "lightsout escapes, {}: unmeasured (no human turns in the window; skipped sessions that predate origin tags (count: {}), because without tags a human turn can't be told from a hook or another agent){agents}",
+                self.window,
                 self.untagged_sessions
             );
         }
         format!(
-            "lightsout escapes: {} of {} human turns say an agent's work or claim was wrong ({:.1}%), labelled by {}. Skipped sessions that predate origin tags (count: {}).\nThis is a floor: check the model against your own blind labels on a sample before trusting the number (on the author's hand-labelled sample of 11 escapes, see the README: precision 6/6, recall 6/11).",
+            "lightsout escapes, {}: {} of {} human turns say an agent's work or claim was wrong ({:.1}%), labelled by {}. Skipped sessions that predate origin tags (count: {}).\nThis is a floor: check the model against your own blind labels on a sample before trusting the number (on the author's hand-labelled sample of 11 escapes, see the README: precision 6/6, recall 6/11).{agents}",
+            self.window,
             self.escapes,
             self.turns,
             100.0 * self.escapes as f64 / self.turns as f64,

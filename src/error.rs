@@ -15,6 +15,8 @@ pub enum Error {
     BadInstant { flag: &'static str, given: String },
     NoHome,
     DaysAndSince,
+    BadAgents { given: String },
+    UntilAlone,
     ProjectFolder { dir: PathBuf },
     NoProjectsDir { dir: PathBuf },
     NoHub { path: PathBuf },
@@ -38,7 +40,7 @@ impl fmt::Display for Error {
             ),
             Error::UnknownFlag { given } => write!(
                 f,
-                "lightsout: unknown flag '{given}'. runs takes --days N, --projects DIR and --json; andon takes --days N, --hub-db PATH and --json; escapes takes --days N or --since/--until, --projects DIR, --model, --ollama and --json"
+                "lightsout: unknown flag '{given}'. runs takes --days N or --since/--until, --agent NAMES, --projects DIR and --json; andon takes --days N, --hub-db PATH and --json; escapes takes --days N or --since/--until, --agent NAMES, --projects DIR, --model, --ollama and --json"
             ),
             Error::NoTranscripts { dir } => write!(
                 f,
@@ -66,6 +68,14 @@ impl fmt::Display for Error {
             Error::DaysAndSince => write!(
                 f,
                 "lightsout: --days and --since both set the start of the window. Use one: --days 7, or --since 2026-10-10T00:00:00Z"
+            ),
+            Error::BadAgents { given } => write!(
+                f,
+                "lightsout: --agent takes agent names split by commas, with none empty; got '{given}'. Try --agent Keel,Harbor"
+            ),
+            Error::UntilAlone => write!(
+                f,
+                "lightsout: --until ends a window that --since starts. Add --since, e.g. --since 2026-10-17T02:00:00Z --until 2026-10-17T10:00:00Z"
             ),
             Error::ProjectFolder { dir } => write!(
                 f,
