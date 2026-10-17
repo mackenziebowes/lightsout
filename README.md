@@ -38,7 +38,7 @@ Read the median and the p90: half of the touches were followed by half a minute 
 
 `escapes` labels each of your turns with a local model, so nothing leaves your machine and it costs nothing. Install [Ollama](https://ollama.com), run `ollama serve`, then `ollama pull qwen3.5:9b-q8_0` (about 10 GB; a smaller model works with `--model`, but check it first). Its prompt is in `src/escapes.rs`. The sample it mentions is a set of human turns, 11 of them real escapes, that the author labelled by hand to check the model.
 
-Watch two numbers together: minutes per touch (`runs`) should rise, and the share of your turns that catch a defect (`escapes`) should fall. `escapes` labels each human turn with a local model (default `qwen3.5:9b-q8_0`), so it costs nothing, and it reads as a floor. Check it against your own blind labels on a sample first.
+Watch two numbers together: minutes per touch (`runs`) should rise, and the share of your turns that catch a defect (`escapes`) should fall. `escapes` reads as a floor. Check it against your own blind labels on a sample first.
 
 Read-only. Only sessions whose transcripts carry `origin` tags (recent Claude Code versions) are measured; older ones are counted and left out.
 

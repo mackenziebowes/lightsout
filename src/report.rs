@@ -41,6 +41,10 @@ impl Spread {
     }
 }
 
+fn sessions(n: usize) -> String {
+    if n == 1 { "1 session".into() } else { format!("{n} sessions") }
+}
+
 pub struct RunsReport {
     pub days: u32,
     pub files: usize,
@@ -132,8 +136,8 @@ impl RunsReport {
         out.extend(self.inputs.iter().map(|(k, n)| format!("  {k}: {n}")));
         if self.tagged_sessions == 0 {
             out.push(format!(
-                "nothing measured: all {} sessions in the window predate origin tags, so a human turn can't be told from a hook or another agent. Update Claude Code, use it, and run again",
-                self.untagged_sessions
+                "nothing measured: every session in the window ({}) predates origin tags, so a human turn can't be told from a hook or another agent. Update Claude Code, use it, and run again",
+                sessions(self.untagged_sessions)
             ));
         }
         out.join("\n")
@@ -229,17 +233,17 @@ impl EscapesReport {
     pub fn text(&self) -> String {
         if self.turns == 0 {
             return format!(
-                "lightsout escapes: unmeasured (no human turns in the window; {} sessions predate origin tags and were skipped, because without tags a human turn can't be told from a hook or another agent)",
-                self.untagged_sessions
+                "lightsout escapes: unmeasured (no human turns in the window; skipped {} that predate origin tags, because without tags a human turn can't be told from a hook or another agent)",
+                sessions(self.untagged_sessions)
             );
         }
         format!(
-            "lightsout escapes: {} of {} human turns say an agent's work or claim was wrong ({:.1}%), labelled by {}. {} sessions predate origin tags and were skipped.\nThis is a floor: check the model against your own blind labels on a sample before trusting the number (on the author's hand-labelled sample of 11 escapes, see the README: precision 6/6, recall 6/11).",
+            "lightsout escapes: {} of {} human turns say an agent's work or claim was wrong ({:.1}%), labelled by {}. Skipped {} that predate origin tags.\nThis is a floor: check the model against your own blind labels on a sample before trusting the number (on the author's hand-labelled sample of 11 escapes, see the README: precision 6/6, recall 6/11).",
             self.escapes,
             self.turns,
             100.0 * self.escapes as f64 / self.turns as f64,
             self.model,
-            self.untagged_sessions
+            sessions(self.untagged_sessions)
         )
     }
 }
