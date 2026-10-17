@@ -94,7 +94,13 @@ fn parse_args(args: &[String]) -> Result<Command, Error> {
     }
     let scope = |default_days: u32| -> Result<Scope, Error> {
         let window = match instant("--since")? {
-            Some(since) => Window::Span { since, until: instant("--until")? },
+            Some(since) => {
+                let until = instant("--until")?;
+                if let Some(u) = until.filter(|u| *u <= since) {
+                    return Err(Error::EmptyWindow { since: since.iso(), until: u.iso() });
+                }
+                Window::Span { since, until }
+            }
             None => Window::Days(days(default_days)?),
         };
         let agents = match get("--agent") {
@@ -124,6 +130,8 @@ fn parse_args(args: &[String]) -> Result<Command, Error> {
 struct Session {
     events: Vec<transcript::Event>,
     names: Vec<String>,
+    /// Launch mode of the session, from its first record that carries one.
+    entrypoint: Option<String>,
 }
 
 fn read_session_file(f: &Path) -> Session {
@@ -131,11 +139,12 @@ fn read_session_file(f: &Path) -> Session {
     Session {
         events: text.lines().filter_map(|l| transcript::parse_line(l).ok()).collect(),
         names: text.lines().filter_map(transcript::agent_name).collect(),
+        entrypoint: text.lines().find_map(transcript::entrypoint),
     }
 }
 
-/// Splits sessions into those the scope's agents admit and a count of those left out that had a turn in the window.
-fn in_agents(files: &[PathBuf], scope: &Scope, now_ms: i64) -> (Vec<Session>, usize) {
+/// The sessions with a turn in the window, split into those the scope's agents admit and a count of those left out.
+fn in_scope(files: &[PathBuf], scope: &Scope, now_ms: i64) -> (Vec<Session>, report::LeftOut) {
     let (since, until) = scope.window.bounds(now_ms);
     let in_window = |s: &Session| {
         s.events.iter().any(|e| {
@@ -146,13 +155,18 @@ fn in_agents(files: &[PathBuf], scope: &Scope, now_ms: i64) -> (Vec<Session>, us
         })
     };
     let mut kept = Vec::new();
-    let mut left_out = 0;
+    let mut left_out = report::LeftOut { headless: 0, interactive: 0 };
     for f in files {
         let s = read_session_file(f);
+        if !in_window(&s) {
+            continue;
+        }
         if scope.agents.admits(&s.names) {
             kept.push(s);
-        } else if in_window(&s) {
-            left_out += 1;
+        } else if s.entrypoint.as_deref() == Some("sdk-cli") {
+            left_out.headless += 1;
+        } else {
+            left_out.interactive += 1;
         }
     }
     (kept, left_out)
@@ -194,7 +208,7 @@ fn run(cmd: Command) -> Result<String, Error> {
         Command::Runs { scope, projects, json } => {
             let (since, until) = scope.window.bounds(now_ms);
             let files = transcripts(&projects, UNIX_EPOCH + Duration::from_millis(since.0.max(0) as u64))?;
-            let (sessions, left_out) = in_agents(&files, &scope, now_ms);
+            let (sessions, left_out) = in_scope(&files, &scope, now_ms);
             let readings = sessions
                 .into_iter()
                 .map(|s| {
@@ -210,14 +224,14 @@ fn run(cmd: Command) -> Result<String, Error> {
                     session::read_session(events)
                 })
                 .collect();
-            let r = report::runs_report(&scope, files.len(), left_out, readings);
+            let r = report::runs_report(&scope, left_out, readings);
             Ok(if json { r.json().to_string() } else { r.text() })
         }
         Command::Escapes { scope, projects, model, ollama, json } => {
             let (since, until) = scope.window.bounds(now_ms);
             let oldest = UNIX_EPOCH + Duration::from_millis(since.0.max(0) as u64);
             let files = transcripts(&projects, oldest)?;
-            let (sessions, left_out) = in_agents(&files, &scope, now_ms);
+            let (sessions, left_out) = in_scope(&files, &scope, now_ms);
             let sessions: Vec<_> = sessions.into_iter().map(|s| s.events).collect();
             let untagged = sessions
                 .iter()

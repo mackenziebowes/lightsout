@@ -45,11 +45,19 @@ impl Spread {
 /// Which agents the numbers cover, and how many sessions in the window their names left out.
 pub enum AgentsReport {
     Any,
-    Named { names: String, left_out: usize },
+    Named { names: String, left_out: LeftOut },
+}
+
+/// Sessions with a turn in the window that the named agents did not include.
+#[derive(Clone, Copy)]
+pub struct LeftOut {
+    /// Headless runs (`sdk-cli`), such as an eval harness.
+    pub headless: usize,
+    pub interactive: usize,
 }
 
 impl AgentsReport {
-    pub fn of(agents: &Agents, left_out: usize) -> AgentsReport {
+    pub fn of(agents: &Agents, left_out: LeftOut) -> AgentsReport {
         match agents.words() {
             None => AgentsReport::Any,
             Some(names) => AgentsReport::Named { names, left_out },
@@ -59,7 +67,7 @@ impl AgentsReport {
     fn json(&self) -> Value {
         match self {
             AgentsReport::Any => json!({"kind": "any"}),
-            AgentsReport::Named { names, left_out } => json!({"kind": "named", "names": names, "sessionsLeftOut": left_out}),
+            AgentsReport::Named { names, left_out } => json!({"kind": "named", "names": names, "leftOut": {"headless": left_out.headless, "interactive": left_out.interactive}}),
         }
     }
 
@@ -67,7 +75,8 @@ impl AgentsReport {
         match self {
             AgentsReport::Any => None,
             AgentsReport::Named { names, left_out } => Some(format!(
-                "only sessions named {names}; left out {left_out} sessions with a turn in the window and other names or none"
+                "only sessions named {names}. Left out, because they have other names or none: {} headless runs (entrypoint sdk-cli) and {} interactive sessions",
+                left_out.headless, left_out.interactive
             )),
         }
     }
@@ -76,7 +85,7 @@ impl AgentsReport {
 pub struct RunsReport {
     pub window: String,
     pub agents: AgentsReport,
-    pub files: usize,
+    
     pub untagged_sessions: usize,
     pub tagged_sessions: usize,
     pub sessions_never_touched: usize,
@@ -85,7 +94,7 @@ pub struct RunsReport {
     pub inputs: Vec<(String, usize)>,
 }
 
-pub fn runs_report(scope: &Scope, files: usize, left_out: usize, readings: Vec<SessionReading>) -> RunsReport {
+pub fn runs_report(scope: &Scope, left_out: LeftOut, readings: Vec<SessionReading>) -> RunsReport {
     let mut untagged = 0;
     let mut tagged = 0;
     let mut never_touched = 0;
@@ -118,7 +127,6 @@ pub fn runs_report(scope: &Scope, files: usize, left_out: usize, readings: Vec<S
     RunsReport {
         window: scope.window.words(),
         agents: AgentsReport::of(&scope.agents, left_out),
-        files,
         untagged_sessions: untagged,
         tagged_sessions: tagged,
         sessions_never_touched: never_touched,
@@ -145,7 +153,6 @@ impl RunsReport {
         json!({
             "window": self.window,
             "agents": self.agents.json(),
-            "files": self.files,
             "sessions": {"tagged": self.tagged_sessions, "untagged": self.untagged_sessions, "neverTouched": self.sessions_never_touched},
             "agentMinutesPerHumanTouch": self.runs.json(),
             "unattendedMinutesBeforeFirstTouch": self.unattended_before_first_touch.json(),
@@ -155,7 +162,7 @@ impl RunsReport {
 
     pub fn text(&self) -> String {
         let mut out = vec![
-            format!("lightsout runs: {}, {} transcript files", self.window, self.files),
+            format!("lightsout runs: {}, {} sessions with a turn in the window", self.window, self.tagged_sessions + self.untagged_sessions),
             format!(
                 "sessions: {} with origin tags, {} without (written before Claude Code tagged origins; not measured), {} never touched by a human",
                 self.tagged_sessions, self.untagged_sessions, self.sessions_never_touched
@@ -253,7 +260,7 @@ pub struct EscapesReport {
     pub untagged_sessions: usize,
 }
 
-pub fn escapes_report(model: String, scope: &Scope, (since, until): (Instant, Option<Instant>), left_out: usize, untagged_sessions: usize, labelled: Vec<(Instant, Label)>) -> EscapesReport {
+pub fn escapes_report(model: String, scope: &Scope, (since, until): (Instant, Option<Instant>), left_out: LeftOut, untagged_sessions: usize, labelled: Vec<(Instant, Label)>) -> EscapesReport {
     let escapes = labelled.iter().filter(|(_, l)| matches!(l, Label::Escape)).count();
     EscapesReport { model, window: scope.window.words(), since, until, agents: AgentsReport::of(&scope.agents, left_out), turns: labelled.len(), escapes, untagged_sessions }
 }

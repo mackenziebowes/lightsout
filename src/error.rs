@@ -17,6 +17,7 @@ pub enum Error {
     DaysAndSince,
     BadAgents { given: String },
     UntilAlone,
+    EmptyWindow { since: String, until: String },
     ProjectFolder { dir: PathBuf },
     NoProjectsDir { dir: PathBuf },
     NoHub { path: PathBuf },
@@ -76,6 +77,10 @@ impl fmt::Display for Error {
             Error::UntilAlone => write!(
                 f,
                 "lightsout: --until ends a window that --since starts. Add --since, e.g. --since 2026-10-17T02:00:00Z --until 2026-10-17T10:00:00Z"
+            ),
+            Error::EmptyWindow { since, until } => write!(
+                f,
+                "lightsout: --until {until} is not after --since {since}, so the window holds nothing. Put the later time on --until"
             ),
             Error::ProjectFolder { dir } => write!(
                 f,

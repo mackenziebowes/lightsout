@@ -157,3 +157,12 @@ pub fn agent_name(line: &str) -> Option<String> {
     }
     v.get("agentName").and_then(Value::as_str).map(str::to_string)
 }
+
+/// How Claude Code was launched for this line (`cli` for a person at the terminal, `sdk-cli` for a headless run).
+pub fn entrypoint(line: &str) -> Option<String> {
+    if !line.contains("\"entrypoint\"") {
+        return None;
+    }
+    let v: Value = serde_json::from_str(line).ok()?;
+    v.get("entrypoint").and_then(Value::as_str).map(str::to_string)
+}
