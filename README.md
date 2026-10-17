@@ -43,3 +43,7 @@ Watch two numbers together: minutes per touch (`runs`) should rise, and the shar
 Read-only. Only sessions whose transcripts carry `origin` tags (recent Claude Code versions) are measured; older ones are counted and left out.
 
 Why: a factory runs lights-out for as long as the time between abnormalities it can't handle itself. The research behind this tool is in the MBSI library, `wiki/how-to-run-a-lights-out-software-factory.md`.
+
+## Talk
+
+If you're measuring how long your agents run without you, I'd like to compare numbers. Email mackenzie@mackenziebowes.com, or find me on X as [@_mackenziebowes](https://x.com/_mackenziebowes).
